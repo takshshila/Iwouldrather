@@ -4,15 +4,6 @@ from transformers import BertModel, AutoTokenizer
 from argparse import ArgumentParser
 import pandas as pd
 
-parser = ArgumentParser()
-parser.add_argument('-m', '--model', default='bert-base-cased')
-parser.add_argument('-b', '--batch_size', default=32)
-args = parser.parse_args()
-
-pretrained_model = str(args.model)
-batch = int(args.batch_size)
-device = 'cuda' if torch.cuda.is_available() else 'cpu'
-
 
 class BERT(torch.nn.Module):
     def __init__(self):
@@ -48,6 +39,17 @@ class Dataset(torch.utils.data.Dataset):
 
 
 def main():
+    parser = ArgumentParser()
+    parser.add_argument('-m', '--model', default='bert-base-cased')
+    parser.add_argument('-b', '--batch_size', default=32)
+    parser.add_argument('-e', '--epochs', default=10)
+    args = parser.parse_args()
+
+    pretrained_model = str(args.model)
+    batch_size = int(args.batch_size)
+    num_epochs = int(args.epochs)
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+
     train = pd.read_csv()
     valid = pd.read_csv()
     test = pd.read_csv()
@@ -64,13 +66,46 @@ def main():
 
     model = BERT()
     model.to(device)
-    batch_size = batch
     criterion = torch.nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-7)
 
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=False)
     valid_loader = DataLoader(valid_dataset, batch_size=batch_size, shuffle=False)
     test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
+
+    eval_every = int(len(train_loader) * 0.8)
+    global_step = 0
+
+    for epoch in range(num_epochs):
+        print(f'\nEpoch: {epoch + 1} of {num_epochs}')
+
+        model.train()
+
+        for batch in train_loader:
+            targets = batch['labels'].to(device)
+            input_ids = batch['input_ids'].to(device)
+            attention_mask = batch['attention_mask'].to(device)
+            outputs = model(input_ids=input_ids, attention_mask=attention_mask)
+            outputs = outputs.reshape(-1)
+            outputs.data = torch.tensor([1.0 if x.item() >= 0.5 else 0.0 for x in outputs.data]).to(device)
+            loss = criterion(outputs, targets)
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+            global_step += 1
+
+            if global_step % eval_every == 0:
+                model.eval()
+                with torch.no_grad():
+                    for valid_batch in valid_loader:
+                        targets = valid_batch['labels'].to(device)
+                        input_ids = valid_batch['input_ids'].to(device)
+                        attention_mask = valid_batch['attention_mask'].to(device)
+                        outputs = model(input_ids=input_ids, attention_mask=attention_mask)
+                        outputs = outputs.reshape(-1)
+                        outputs.data = torch.tensor([1.0 if x.item() >= 0.5 else 0.0 for x in outputs.data]).to(device)
+                        loss = criterion(outputs, targets)
+                        loss.backward()
 
 
 if __name__ == '__main__':
