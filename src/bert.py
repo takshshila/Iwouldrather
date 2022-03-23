@@ -2,7 +2,7 @@ import torch
 from torch.utils.data import DataLoader
 from transformers import BertModel, AutoTokenizer
 from argparse import ArgumentParser
-import pandas as pd
+from datasets import load_dataset
 
 parser = ArgumentParser()
 parser.add_argument('-m', '--model', default='bert-base-cased')
@@ -50,19 +50,26 @@ class Dataset(torch.utils.data.Dataset):
 
 
 def main():
-    train = pd.read_csv()
-    valid = pd.read_csv()
-    test = pd.read_csv()
 
+    mnli_dataset = load_dataset('glue', 'mnli')
     tokenizer = AutoTokenizer.from_pretrained(pretrained_model, truncation=True, do_lower_case=True)
 
-    train_encodings = tokenizer(list(train['text']), truncation=True, padding=True)
-    valid_encodings = tokenizer(list(valid['text']), truncation=True, padding=True)
-    test_encodings = tokenizer(list(test['text']), truncation=True, padding=True)
+    train_encodings = tokenizer(list(mnli_dataset['train']['premise']),
+                                list(mnli_dataset['train']['hypothesis']),
+                                truncation_strategy='only_first',
+                                padding=True)
+    valid_encodings = tokenizer(list(mnli_dataset['validation_matched']['premise']),
+                                list(mnli_dataset['validation_matched']['hypothesis']),
+                                truncation_strategy='only_first',
+                                padding=True)
+    test_encodings = tokenizer(list(mnli_dataset['test_matched']['premise']),
+                               list(mnli_dataset['test_matched']['hypothesis']),
+                               truncation_strategy='only_first',
+                               padding=True)
 
-    train_dataset = Dataset(train_encodings, list(train['label'].astype(float)))
-    valid_dataset = Dataset(valid_encodings, list(valid['label'].astype(float)))
-    test_dataset = Dataset(test_encodings, list(test['label'].astype(float)))
+    train_dataset = Dataset(train_encodings, list(map(float, mnli_dataset['train']['label'])))
+    valid_dataset = Dataset(valid_encodings, list(map(float, mnli_dataset['validation_matched']['label'])))
+    test_dataset = Dataset(test_encodings, list(map(float, mnli_dataset['test_matched']['label'])))
 
     model = BERT()
     model.to(device)
@@ -78,7 +85,6 @@ def main():
 
     for epoch in range(num_epochs):
         print(f'\nEpoch: {epoch + 1} of {num_epochs}')
-
         model.train()
 
         for batch in train_loader:
@@ -96,6 +102,7 @@ def main():
 
             if global_step % eval_every == 0:
                 model.eval()
+
                 with torch.no_grad():
                     for valid_batch in valid_loader:
                         targets = valid_batch['labels'].to(device)
@@ -104,8 +111,7 @@ def main():
                         outputs = model(input_ids=input_ids, attention_mask=attention_mask)
                         outputs = outputs.reshape(-1)
                         outputs.data = torch.tensor([1.0 if x.item() >= 0.5 else 0.0 for x in outputs.data]).to(device)
-                        loss = criterion(outputs, targets)
-                        loss.backward()
+                        criterion(outputs, targets)
 
 
 if __name__ == '__main__':
