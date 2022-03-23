@@ -1,7 +1,5 @@
 # “I’d rather just go to bed”: Understanding Indirect Answers
 
----
-
 ## Open In Colab
 
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/drive/1shG5ti8V6KESLgPVr6HrW_JAXpaYnr24)
