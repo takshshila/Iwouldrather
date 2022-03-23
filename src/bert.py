@@ -1,12 +1,14 @@
 import torch
-from transformers import BertModel
+from transformers import BertModel, AutoTokenizer
 from argparse import ArgumentParser
+import pandas as pd
 
 parser = ArgumentParser()
 parser.add_argument('-m', '--model', default='bert-base-cased')
 args = parser.parse_args()
 
 pretrained_model = str(args.model)
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 
 class BERTClass(torch.nn.Module):
@@ -28,8 +30,34 @@ class BERTClass(torch.nn.Module):
         return output
 
 
+class Dataset(torch.utils.data.Dataset):
+    def __init__(self, encodings, labels):
+        self.encodings = encodings
+        self.labels = labels
+
+    def __getitem__(self, idx):
+        item = {key: torch.tensor(val[idx]) for key, val in self.encodings.items()}
+        item['labels'] = torch.tensor(self.labels[idx]).to(device)
+        return item
+
+    def __len__(self):
+        return len(self.labels)
+
+
 def main():
-    pass
+    train = pd.read_csv()
+    valid = pd.read_csv()
+    test = pd.read_csv()
+
+    tokenizer = AutoTokenizer.from_pretrained(pretrained_model, truncation=True, do_lower_case=True)
+
+    train_encodings = tokenizer(list(train['text']), truncation=True, padding=True)
+    valid_encodings = tokenizer(list(valid['text']), truncation=True, padding=True)
+    test_encodings = tokenizer(list(test['text']), truncation=True, padding=True)
+
+    train_dataset = Dataset(train_encodings, list(train['label'].astype(float)))
+    valid_dataset = Dataset(valid_encodings, list(valid['label'].astype(float)))
+    test_dataset = Dataset(test_encodings, list(test['label'].astype(float)))
 
 
 if __name__ == '__main__':
