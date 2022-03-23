@@ -2,13 +2,17 @@ import torch
 from transformers import BertModel
 from argparse import ArgumentParser
 
-args = ArgumentParser()
+parser = ArgumentParser()
+parser.add_argument('-m', '--model', default='bert-base-cased')
+args = parser.parse_args()
+
+pretrained_model = str(args.model)
 
 
 class BERTClass(torch.nn.Module):
     def __init__(self):
         super(BERTClass, self).__init__()
-        self.l1 = BertModel.from_pretrained()
+        self.l1 = BertModel.from_pretrained(pretrained_model)
         self.pre_classifier = torch.nn.Linear(768, 768)
         self.dropout = torch.nn.Dropout(0.3)
         self.classifier = torch.nn.Linear(768, 3)
@@ -23,3 +27,10 @@ class BERTClass(torch.nn.Module):
         output = self.classifier(pooler)
         return output
 
+
+def main():
+    pass
+
+
+if __name__ == '__main__':
+    main()
