@@ -1,19 +1,22 @@
 import torch
+from torch.utils.data import DataLoader
 from transformers import BertModel, AutoTokenizer
 from argparse import ArgumentParser
 import pandas as pd
 
 parser = ArgumentParser()
 parser.add_argument('-m', '--model', default='bert-base-cased')
+parser.add_argument('-b', '--batch_size', default=32)
 args = parser.parse_args()
 
 pretrained_model = str(args.model)
+batch = int(args.batch_size)
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 
-class BERTClass(torch.nn.Module):
+class BERT(torch.nn.Module):
     def __init__(self):
-        super(BERTClass, self).__init__()
+        super(BERT, self).__init__()
         self.l1 = BertModel.from_pretrained(pretrained_model)
         self.pre_classifier = torch.nn.Linear(768, 768)
         self.dropout = torch.nn.Dropout(0.3)
@@ -58,6 +61,16 @@ def main():
     train_dataset = Dataset(train_encodings, list(train['label'].astype(float)))
     valid_dataset = Dataset(valid_encodings, list(valid['label'].astype(float)))
     test_dataset = Dataset(test_encodings, list(test['label'].astype(float)))
+
+    model = BERT()
+    model.to(device)
+    batch_size = batch
+    criterion = torch.nn.CrossEntropyLoss()
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-7)
+
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=False)
+    valid_loader = DataLoader(valid_dataset, batch_size=batch_size, shuffle=False)
+    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
 
 
 if __name__ == '__main__':
