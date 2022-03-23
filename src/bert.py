@@ -56,15 +56,15 @@ def main():
 
     train_encodings = tokenizer(list(mnli_dataset['train']['premise']),
                                 list(mnli_dataset['train']['hypothesis']),
-                                truncation_strategy='only_first',
+                                truncation=True,
                                 padding=True)
     valid_encodings = tokenizer(list(mnli_dataset['validation_matched']['premise']),
                                 list(mnli_dataset['validation_matched']['hypothesis']),
-                                truncation_strategy='only_first',
+                                truncation=True,
                                 padding=True)
     test_encodings = tokenizer(list(mnli_dataset['test_matched']['premise']),
                                list(mnli_dataset['test_matched']['hypothesis']),
-                               truncation_strategy='only_first',
+                               truncation=True,
                                padding=True)
 
     train_dataset = Dataset(train_encodings, list(map(float, mnli_dataset['train']['label'])))
