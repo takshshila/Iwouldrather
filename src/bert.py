@@ -4,6 +4,17 @@ from transformers import BertModel, AutoTokenizer
 from argparse import ArgumentParser
 import pandas as pd
 
+parser = ArgumentParser()
+parser.add_argument('-m', '--model', default='bert-base-cased')
+parser.add_argument('-b', '--batch_size', default=32)
+parser.add_argument('-e', '--epochs', default=10)
+args = parser.parse_args()
+
+pretrained_model = str(args.model)
+batch_size = int(args.batch_size)
+num_epochs = int(args.epochs)
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
+
 
 class BERT(torch.nn.Module):
     def __init__(self):
@@ -39,17 +50,6 @@ class Dataset(torch.utils.data.Dataset):
 
 
 def main():
-    parser = ArgumentParser()
-    parser.add_argument('-m', '--model', default='bert-base-cased')
-    parser.add_argument('-b', '--batch_size', default=32)
-    parser.add_argument('-e', '--epochs', default=10)
-    args = parser.parse_args()
-
-    pretrained_model = str(args.model)
-    batch_size = int(args.batch_size)
-    num_epochs = int(args.epochs)
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
-
     train = pd.read_csv()
     valid = pd.read_csv()
     test = pd.read_csv()
