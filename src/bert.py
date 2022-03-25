@@ -46,9 +46,9 @@ class Dataset(torch.utils.data.Dataset):
 
     def __getitem__(self, idx):
         data = self.reader.get_chunk(self.chunksize)
-        encodings = tokenizer(list(data.values[0]), list(data.values[1]), truncation=True, padding=True)
+        encodings = tokenizer([x[0] for x in data.values], [x[1] for x in data.values], truncation=True, padding=True)
         item = {key: torch.tensor(val[idx]) for key, val in encodings.items()}
-        item['labels'] = torch.tensor(data.values[2][idx]).to(device)
+        item['labels'] = torch.tensor([x[2] for x in data.values][idx]).to(device)
         return item
 
     def __len__(self):
