@@ -17,8 +17,6 @@ chunk_size = int(args.chunk_size)
 num_epochs = int(args.epochs)
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-tokenizer = AutoTokenizer.from_pretrained(pretrained_model, truncation=True, do_lower_case=True)
-
 
 class BERT(torch.nn.Module):
     def __init__(self):
@@ -40,19 +38,17 @@ class BERT(torch.nn.Module):
 
 
 class Dataset(torch.utils.data.Dataset):
-    def __init__(self, csv_path, chunkSize):
-        self.chunksize = chunkSize
-        self.reader = pd.read_csv(csv_path, sep=',', chunksize=self.chunksize, header=None, iterator=True)
+    def __init__(self, encodings, labels):
+        self.encodings = encodings
+        self.labels = labels
 
     def __getitem__(self, idx):
-        data = self.reader.get_chunk(self.chunksize)
-        encodings = tokenizer([x[0] for x in data.values], [x[1] for x in data.values], truncation=True, padding=True)
-        item = {key: torch.tensor(val[idx]) for key, val in encodings.items()}
-        item['labels'] = torch.tensor([x[2] for x in data.values][idx]).to(device)
+        item = {key: torch.tensor(val[idx]) for key, val in self.encodings.items()}
+        item['labels'] = torch.tensor(self.labels[idx]).to(device)
         return item
 
     def __len__(self):
-        return self.chunksize
+        return len(self.labels)
 
 
 def main():
@@ -62,9 +58,23 @@ def main():
     criterion = torch.nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-7)
 
-    train_loader = DataLoader(Dataset('../data/train.csv', chunk_size), batch_size=batch_size, shuffle=False)
-    # valid_loader = DataLoader(Dataset('../data/valid.csv', chunk_size), batch_size=batch_size, shuffle=False)
-    # test_loader = DataLoader(Dataset('../data/test.csv', chunk_size), batch_size=batch_size, shuffle=False)
+    train = pd.read_csv('../data/train.csv', sep=',').dropna()
+    # valid = pd.read_csv('../data/valid.csv', sep=',').dropna()
+    # test = pd.read_csv('../data/test.csv', sep=',').dropna()
+
+    tokenizer = AutoTokenizer.from_pretrained(pretrained_model, truncation=True, do_lower_case=True)
+
+    train_encodings = tokenizer(train['premise'].tolist(), train['hypothesis'].tolist(), truncation=True, padding=True)
+    # valid_encodings = tokenizer(train['premise'].tolist(), train['hypothesis'].tolist(), truncation=True, padding=True)
+    # test_encodings = tokenizer(train['premise'].tolist(), train['hypothesis'].tolist(), truncation=True, padding=True)
+
+    train_dataset = Dataset(train_encodings, list(train['label'].astype(float)))
+    # valid_dataset = Dataset(valid_encodings, list(valid['label'].astype(float)))
+    # test_dataset = Dataset(test_encodings, list(test['label'].astype(float)))
+
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=False)
+    # valid_loader = DataLoader(valid_dataset, batch_size=batch_size, shuffle=False)
+    # test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
 
     # eval_every = int(len(train_loader) * 0.8)
     global_step = 0
@@ -85,6 +95,7 @@ def main():
             loss.backward()
             optimizer.step()
             global_step += 1
+            print('|', end='')
 
             # if global_step % eval_every == 0:
             #     model.eval()
