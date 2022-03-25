@@ -7,13 +7,17 @@ from argparse import ArgumentParser
 parser = ArgumentParser()
 parser.add_argument('-m', '--model', default='bert-base-cased')
 parser.add_argument('-b', '--batch_size', default=32)
+parser.add_argument('-c', '--chunk_size', default=32)
 parser.add_argument('-e', '--epochs', default=10)
 args = parser.parse_args()
 
 pretrained_model = str(args.model)
 batch_size = int(args.batch_size)
+chunk_size = int(args.chunk_size)
 num_epochs = int(args.epochs)
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
+
+tokenizer = AutoTokenizer.from_pretrained(pretrained_model, truncation=True, do_lower_case=True)
 
 
 class BERT(torch.nn.Module):
@@ -36,54 +40,33 @@ class BERT(torch.nn.Module):
 
 
 class Dataset(torch.utils.data.Dataset):
-    def __init__(self, encodings, labels):
-        self.encodings = encodings
-        self.labels = labels
+    def __init__(self, csv_path, chunkSize):
+        self.chunksize = chunkSize
+        self.reader = pd.read_csv(csv_path, sep=',', chunksize=self.chunksize, header=None, iterator=True)
 
     def __getitem__(self, idx):
-        item = {key: torch.tensor(val[idx]) for key, val in self.encodings.items()}
-        item['labels'] = torch.tensor(self.labels[idx]).to(device)
+        data = self.reader.get_chunk(self.chunksize)
+        encodings = tokenizer(list(data.values[0]), list(data.values[1]), truncation=True, padding=True)
+        item = {key: torch.tensor(val[idx]) for key, val in encodings.items()}
+        item['labels'] = torch.tensor(data.values[2][idx]).to(device)
         return item
 
     def __len__(self):
-        return len(self.labels)
+        return self.chunksize
 
 
 def main():
-
-    train = pd.read_csv()
-    valid = pd.read_csv()
-    test = pd.read_csv()
-
-    tokenizer = AutoTokenizer.from_pretrained(pretrained_model, truncation=True, do_lower_case=True)
-
-    train_encodings = tokenizer(list(mnli_dataset['train']['premise']),
-                                list(mnli_dataset['train']['hypothesis']),
-                                truncation=True,
-                                padding=True)
-    valid_encodings = tokenizer(list(mnli_dataset['validation_matched']['premise']),
-                                list(mnli_dataset['validation_matched']['hypothesis']),
-                                truncation=True,
-                                padding=True)
-    test_encodings = tokenizer(list(mnli_dataset['test_matched']['premise']),
-                               list(mnli_dataset['test_matched']['hypothesis']),
-                               truncation=True,
-                               padding=True)
-
-    train_dataset = Dataset(train_encodings, list(map(float, mnli_dataset['train']['label'])))
-    valid_dataset = Dataset(valid_encodings, list(map(float, mnli_dataset['validation_matched']['label'])))
-    test_dataset = Dataset(test_encodings, list(map(float, mnli_dataset['test_matched']['label'])))
 
     model = BERT()
     model.to(device)
     criterion = torch.nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-7)
 
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=False)
-    valid_loader = DataLoader(valid_dataset, batch_size=batch_size, shuffle=False)
-    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
+    train_loader = DataLoader(Dataset('../data/train.csv', chunk_size), batch_size=batch_size, shuffle=False)
+    # valid_loader = DataLoader(Dataset('../data/valid.csv', chunk_size), batch_size=batch_size, shuffle=False)
+    # test_loader = DataLoader(Dataset('../data/test.csv', chunk_size), batch_size=batch_size, shuffle=False)
 
-    eval_every = int(len(train_loader) * 0.8)
+    # eval_every = int(len(train_loader) * 0.8)
     global_step = 0
 
     for epoch in range(num_epochs):
@@ -103,18 +86,18 @@ def main():
             optimizer.step()
             global_step += 1
 
-            if global_step % eval_every == 0:
-                model.eval()
-
-                with torch.no_grad():
-                    for valid_batch in valid_loader:
-                        targets = valid_batch['labels'].to(device)
-                        input_ids = valid_batch['input_ids'].to(device)
-                        attention_mask = valid_batch['attention_mask'].to(device)
-                        outputs = model(input_ids=input_ids, attention_mask=attention_mask)
-                        outputs = outputs.reshape(-1)
-                        outputs.data = torch.tensor([1.0 if x.item() >= 0.5 else 0.0 for x in outputs.data]).to(device)
-                        criterion(outputs, targets)
+            # if global_step % eval_every == 0:
+            #     model.eval()
+            #
+            #     with torch.no_grad():
+            #         for valid_batch in valid_loader:
+            #             targets = valid_batch['labels'].to(device)
+            #             input_ids = valid_batch['input_ids'].to(device)
+            #             attention_mask = valid_batch['attention_mask'].to(device)
+            #             outputs = model(input_ids=input_ids, attention_mask=attention_mask)
+            #             outputs = outputs.reshape(-1)
+            #             outputs.data = torch.tensor([1.0 if x.item() >= 0.5 else 0.0 for x in outputs.data]).to(device)
+            #             criterion(outputs, targets)
 
 
 if __name__ == '__main__':
