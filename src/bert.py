@@ -1,8 +1,8 @@
 import torch
+import pandas as pd
 from torch.utils.data import DataLoader
 from transformers import BertModel, AutoTokenizer
 from argparse import ArgumentParser
-from datasets import load_dataset
 
 parser = ArgumentParser()
 parser.add_argument('-m', '--model', default='bert-base-cased')
@@ -51,7 +51,10 @@ class Dataset(torch.utils.data.Dataset):
 
 def main():
 
-    mnli_dataset = load_dataset('glue', 'mnli')
+    train = pd.read_csv()
+    valid = pd.read_csv()
+    test = pd.read_csv()
+
     tokenizer = AutoTokenizer.from_pretrained(pretrained_model, truncation=True, do_lower_case=True)
 
     train_encodings = tokenizer(list(mnli_dataset['train']['premise']),
