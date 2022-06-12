@@ -1,7 +1,8 @@
 import torch
 import pandas as pd
 from torch.utils.data import DataLoader
-from transformers import BertModel, AutoTokenizer
+from transformers import BertModel,AdamW,BertForSequenceClassification, get_scheduler,default_data_collator, AutoTokenizer,AutoModelForSequenceClassification,DataCollatorWithPadding
+from accelerate import Accelerator
 from datasets import load_metric
 from argparse import ArgumentParser
 import time
@@ -12,13 +13,13 @@ from sklearn import metrics
 
 parser = ArgumentParser()
 parser.add_argument('-m', '--model', default='bert-base-cased')
-parser.add_argument('-b', '--batch_size', default=16)
+parser.add_argument('-b', '--batch_size', default=10)
 parser.add_argument('-c', '--chunk_size', default=32)
 parser.add_argument('-e', '--epochs', default=5)
-parser.add_argument('-train', '--trainingData', default='/home/trawat2/LearningProject/Iwouldrather/data/train_mnli_new.csv')
-parser.add_argument('-val', '--validationData', default='/home/trawat2/LearningProject/Iwouldrather/data/valid.csv')
-parser.add_argument('-test', '--testingData', default='/home/trawat2/LearningProject/Iwouldrather/data/test_mnli_new.csv')
-parser.add_argument('-s', '--saveDir', default='/home/trawat2/LearningProject/Iwouldrather/test-mnli')
+parser.add_argument('-train', '--trainingData', default='/home/trawat2/LearningProject/Iwouldrather/data/boolq/train.csv')
+parser.add_argument('-val', '--validationData', default='/home/trawat2/LearningProject/Iwouldrather/data/boolq/valid.csv')
+parser.add_argument('-test', '--testingData', default='/home/trawat2/LearningProject/Iwouldrather/data/boolq/test.csv')
+parser.add_argument('-s', '--saveDir', default='/home/trawat2/LearningProject/Iwouldrather/test-boolq_new')
 args = parser.parse_args()
 
 
@@ -34,8 +35,9 @@ savePath = str(args.saveDir)
 
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
-out_path=savePath+'/MNLI_new'#+'/'+pretrained_model
-learning_rate = 2e-5
+out_path=savePath
+learning_rate = 3e-5
+
 
 class BERT(torch.nn.Module):
     def __init__(self):
@@ -43,7 +45,7 @@ class BERT(torch.nn.Module):
         self.l1 = BertModel.from_pretrained(pretrained_model)
         self.pre_classifier = torch.nn.Linear(768, 768)
         self.dropout = torch.nn.Dropout(0.3)
-        self.classifier = torch.nn.Linear(768, 3)
+        self.classifier = torch.nn.Linear(768, 2)
 
     def forward(self, input_ids, attention_mask):
         output_1 = self.l1(input_ids=input_ids, attention_mask=attention_mask)
@@ -54,6 +56,15 @@ class BERT(torch.nn.Module):
         pooler = self.dropout(pooler)
         output = self.classifier(pooler)
         return output
+        
+def getModel(model_ckpt):
+    model = BertForSequenceClassification.from_pretrained(model_ckpt, num_labels=2)
+    model.to(device)
+    return model
+    
+def getTokenizer(model_ckpt):
+    tokenizer = AutoTokenizer.from_pretrained(model_ckpt)
+    return tokenizer
 
 
 class Dataset(torch.utils.data.Dataset):
@@ -69,13 +80,65 @@ class Dataset(torch.utils.data.Dataset):
     def __len__(self):
         return len(self.labels)
 
-def training(train_loader, valid_loader):
-    print("Training Started!!!")
-    #eval_every = int(len(train_loader) * 0.8)
-    #global_step = 0
+def trainingONModel(train_loader, valid_loader):
     
+    accelerator = Accelerator()
+    model = getModel(pretrained_model)
+    tokenizer = getTokenizer(pretrained_model)
+    
+    optimizer = AdamW(model.parameters(), lr=lr)
+
+    train_dataloader, eval_dataloader, model, optimizer = accelerator.prepare(
+        train_loader, valid_loader, model, optimizer)
+    
+    num_training_steps = num_epochs * len(train_loader)
+    lr_scheduler = get_scheduler(
+        "linear",
+        optimizer=optimizer,
+        num_warmup_steps=0,
+        num_training_steps=num_training_steps,
+    )
+    
+    metric_acc = load_metric("accuracy")
+    metric_f1 = load_metric("f1")
+        
+    for epoch in range(num_epochs):
+        model.train()
+        for batch in train_dataloader:
+            outputs = model(**batch)
+            loss = outputs.loss
+            accelerator.backward(loss)
+            optimizer.step()
+            lr_scheduler.step()
+            optimizer.zero_grad()
+            
+        model.eval()
+        
+        for batch in eval_dataloader:
+            batch = {k: v.to(device) for k, v in batch.items()}
+            with torch.no_grad():
+                outputs = model(**batch)
+                logits = outputs.logits
+                predictions = torch.argmax(logits, dim=-1)
+                metric_acc.add_batch(predictions=accelerator.gather(predictions),
+                                     references=accelerator.gather(batch["labels"]))
+                metric_f1.add_batch(predictions=accelerator.gather(predictions), references=accelerator.gather(batch["labels"]))
+
+        acc_score = metric_acc.compute()
+        f1_score = metric_f1.compute(average="weighted")
+        print('{} Accuracy: {}, F1 Score: {}'.format(epoch, acc_score, f1_score))
+    
+    if not os.path.exists(out_path):
+        os.makedirs(out_path)
+    
+    torch.save(model, out_path+'/model')
+    
+    
+def training(train_loader, valid_loader):
     model = BERT()
     model.to(device)
+    #model = getModel(pretrained_model)
+    
     criterion = torch.nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
     
@@ -87,7 +150,10 @@ def training(train_loader, valid_loader):
     startTime = time.time()
     metric_acc = load_metric("accuracy")
     metric_f1 = load_metric("f1")
-
+    
+ 
+            
+            
     for epoch in range(num_epochs):
         print(f'\nEpoch: {epoch + 1} of {num_epochs}')
         model.train()
@@ -100,10 +166,8 @@ def training(train_loader, valid_loader):
             optimizer.zero_grad()
             train_loss.backward()
             optimizer.step()
-            #global_step += 1
             print('|', end='')
-            print()
-            
+        print()   
         model.eval()
         with torch.no_grad():
             for valid_batch in valid_loader:
@@ -120,16 +184,10 @@ def training(train_loader, valid_loader):
             f1_score = metric_f1.compute(average="weighted")
             print('{} Accuracy: {}, F1 Score: {}'.format(epoch, acc_score, f1_score))
     
-    
-    #print("---Training Time %s seconds ---" % (time.time() - startTime))
-    #print(f"RAM used: {psutil.Process().memory_info().rss / (1024 * 1024):.2f} MB")
-    
-    
     if not os.path.exists(out_path):
         os.makedirs(out_path)
     
     torch.save(model, out_path+'/model')
-    
     
 def testing(test_loader):
     # Clearing cache
@@ -153,126 +211,66 @@ def testing(test_loader):
             outputs = model(input_ids=input_ids, attention_mask=attention_mask)
 
             predictions = torch.argmax(outputs, dim=-1)
-            y_pred.extend(predictions)
-            y_target.extend(eval_targets)
+            
+            #print(type(predictions), type(eval_targets))
+            y_pred.extend(predictions.cpu())
+            y_target.extend(eval_targets.cpu())
+            
+            
             metric_acc.add_batch(predictions=predictions, references=eval_targets)
             metric_f1.add_batch(predictions=predictions, references=eval_targets)
             
         acc_score = metric_acc.compute()
         f1_score = metric_f1.compute(average="weighted")
   
-        #print('{} Traning Loss: {:.4f} Evaluation Loss: {:.4f}'.format(epoch, train_loss, val_loss))
         print('Testing Accuracy: {}, F1 Score: {}'.format(acc_score, f1_score))
-        #print('accuracy ::::: ', acc_score)
-        #print('f1_score ::::: ', f1_score)
         
-        print(metrics.confusion_matrix(y_target, y_pred))
 
-        # Print the precision and recall, among other metrics
         print(metrics.classification_report(y_target, y_pred, digits=3))
     
 
 
 def main():
+    '''
+    print('BOOLQ finetuning with new test data')
     
-    print('MNLI finetuning with new test data')
     train = pd.read_csv(trainPath, sep=',').dropna()
     valid = pd.read_csv(validPath, sep=',').dropna()
-    test = pd.read_csv(testPath, sep=',').dropna()
+    
 
     tokenizer = AutoTokenizer.from_pretrained(pretrained_model, truncation=True, do_lower_case=True)
 
-    train_encodings = tokenizer(train['premise'].tolist(), train['hypothesis'].tolist(), truncation=True, padding=True)
-    valid_encodings = tokenizer(valid['premise'].tolist(), valid['hypothesis'].tolist(), truncation=True, padding=True)
-    test_encodings = tokenizer(test['premise'].tolist(), test['hypothesis'].tolist(), truncation=True, padding=True)
+    train_encodings = tokenizer(train['question'].tolist(), train['passage'].tolist(), truncation=True, padding=True)
+    valid_encodings = tokenizer(valid['question'].tolist(), valid['passage'].tolist(), truncation=True, padding=True)
+    
 
     train_dataset = Dataset(train_encodings, list(train['label'].astype(float)))
     valid_dataset = Dataset(valid_encodings, list(valid['label'].astype(float)))
-    test_dataset = Dataset(test_encodings, list(test['label'].astype(float)))
+    
 
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=False)
     valid_loader = DataLoader(valid_dataset, batch_size=batch_size, shuffle=False)
-    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
+    
     
     training(train_loader, valid_loader)
     
     
     torch.save(tokenizer, out_path+'/tokenizer')
+    '''
     
-    
-    print("Testing MNLI finetuned model")
-    
+    print("Testing BOOLQ finetuned model")
+    tokenizer = torch.load(out_path+'/tokenizer')
     # Clearing cache
     gc.collect()
     torch.cuda.empty_cache()
-    
-    tokenizer = torch.load(out_path+'/tokenizer', map_location=device)
-    '''
     test = pd.read_csv(testPath, sep=',').dropna()
-    test_encodings = tokenizer(test['premise'].tolist(), test['hypothesis'].tolist(), truncation=True, padding=True)
+    print(test.shape)
+    test_encodings = tokenizer(test['question'].tolist(), test['passage'].tolist(), truncation=True, padding=True)
     test_dataset = Dataset(test_encodings, list(test['label'].astype(float)))
     test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
-    '''
     
     testing(test_loader)
-   
-   
-    
-    '''
-    # eval_every = int(len(train_loader) * 0.8)
-    global_step = 0
-    
-    # Clearing cache
-    gc.collect()
-    torch.cuda.empty_cache()
-    # start time
-    startTime = time.time()
 
-    for epoch in range(num_epochs):
-        print(f'\nEpoch: {epoch + 1} of {num_epochs}')
-        model.train()
-
-        for batch in train_loader:
-            targets = batch['labels'].to(device)
-            input_ids = batch['input_ids'].to(device)
-            attention_mask = batch['attention_mask'].to(device)
-            outputs = model(input_ids=input_ids, attention_mask=attention_mask)
-            
-            #outputs = torch.argmax(outputs, dim=-1)
-            #targets=targets.to(dtype=torch.int64)
-            
-            #print(outputs, targets.long())
-            loss = criterion(outputs, targets.long())
-            #print("loss", loss)
-            
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
-            
-            global_step += 1
-            
-            print('|', end='')
-
-            # if global_step % eval_every == 0:
-            #     model.eval()
-            #
-            #     with torch.no_grad():
-            #         for valid_batch in valid_loader:
-            #             targets = valid_batch['labels'].to(device)
-            #             input_ids = valid_batch['input_ids'].to(device)
-            #             attention_mask = valid_batch['attention_mask'].to(device)
-            #             outputs = model(input_ids=input_ids, attention_mask=attention_mask)
-            #             outputs = outputs.reshape(-1)
-            #             outputs.data = torch.tensor([1.0 if x.item() >= 0.5 else 0.0 for x in outputs.data]).to(device)
-            #             criterion(outputs, targets)
-
-    
-    print("--- %s seconds ---" % (time.time() - startTime))
-    print(f"RAM used: {psutil.Process().memory_info().rss / (1024 * 1024):.2f} MB")
-    torch.save(model, savePath+'/model')
-    torch.save(tokenizer, savePath+'/tokenizer')
-    
-    '''
 
 if __name__ == '__main__':
     main()
